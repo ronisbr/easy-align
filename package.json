@@ -3,7 +3,7 @@
   "displayName": "Easy Align",
   "description": "An interactive alignment plugin for VS Code.",
   "icon": "images/icon.png",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "ronisbr",
   "engines": {
     "vscode": "^1.107.0"
