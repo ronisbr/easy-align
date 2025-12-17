@@ -11,7 +11,7 @@ import * as vscode from 'vscode';
  * 
  * @returns Escaped string for use in RegExp.
  */
-function escapeRegExp(string: string) {
+export function escapeRegExp(string: string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
@@ -206,7 +206,7 @@ async function updateEditorWithAlignedText(
  * 
  * @returns The aligned text.
  */
-function alignText(
+export function alignText(
     text: string,
     pattern: string,
     isAfter: boolean,
