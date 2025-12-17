@@ -72,6 +72,8 @@ function isVSCodeVimActive(): boolean {
  * @param isAfter If `true`, align the character just after the end of the pattern.
  * @param isGlobal If `true`, align all occurrences per line, or only the first occurrence
  *                 otherwise.
+ * @param globalCount If `isGlobal` is `true`, this variable holds the maximum number of
+ *                    occurrences to align per line. If `0`, align all occurrences.
  * @param isRegex If `true`, treat the pattern as a regular expression or a literal string
  *                otherwise.
  * @param isRight If `true`, align to the right, or to the left otherwise. or to the left otherwise.
@@ -82,6 +84,7 @@ function alignText(
     pattern: string,
     isAfter: boolean,
     isGlobal: boolean,
+    globalCount: number,
     isRegex: boolean,
     isRight: boolean
 ): string {
@@ -100,7 +103,8 @@ function alignText(
     // Split each line into parts: [Text, Delimiter, Text, Delimiter...].
     const tokenizedLines = lines.map(line => {
         if (isGlobal) {
-            // Global mode, meaning that we will consider all occurrences in the line.
+            // Global mode, meaning that we can consider all occurrences in the line,
+            // depending on the configuration of the variable `globalCount`.
 
             // Use capturing group to keep delimiters in the split result.
             const captureRegex = new RegExp(`(${pattern})`, 'g');
@@ -128,6 +132,8 @@ function alignText(
         // The parts are structured as: Even = Text, Odd = Delimiter. Hence, the index in
         // the column width array is i / 2.
         for (let i = 0; i < parts.length; i += 2) {
+            if (isGlobal && globalCount > 0 && i >= 2 * globalCount) break;
+
             const textPart = parts[i];
             const delimiterPart = parts[i + 1] || "";
 
@@ -162,6 +168,12 @@ function alignText(
             const delimiter = parts[i + 1];
             const w = colWidths[i / 2];
 
+            if (isGlobal && globalCount > 0 && i >= 2 * globalCount) {
+                // Append the rest of the line as-is.
+                newLine += textPart + delimiter;
+                continue;
+            }
+
             if (isAfter) {
                 // Pattern: [Text][Delimiter][Padding].
                 const pad = ' '.repeat(w - (textPart.length + delimiter.length));
@@ -182,6 +194,7 @@ function alignText(
                 }
             }
         }
+
         return newLine;
     }).join('\n');
 }
@@ -244,22 +257,29 @@ export function activate(context: vscode.ExtensionContext) {
                     let isGlobal = false;
                     let isRegex  = false;
                     let isRight  = false;
+                    let globalCount = 0;
 
                     // Check for flags at the end of the input. The valid options are:
                     //  - g: global (all occurrences).
                     //  - n: next (after the pattern).
-                    const flagMatch = value.match(/^(.*)\/([gnr]+)$/);
+                    //  - r: right align.
+                    const flagMatch = value.match(/^(.*)\/((?:g\d*|[nr])+)+$/);
 
                     if (flagMatch) {
-                        pattern = flagMatch[1];
-                        if (flagMatch[2].includes('n'))
-                            isAfter = true;
+                        const flags = flagMatch[2];
 
-                        if (flagMatch[2].includes('g'))
+                        if (flags.includes('n')) isAfter = true;
+                        if (flags.includes('r')) isRight = true;
+
+                        // Check for global flag with optional number.
+                        const globalMatch = flags.match(/g(\d*)/);
+
+                        if (globalMatch) {
                             isGlobal = true;
 
-                        if (flagMatch[2].includes('r'))
-                            isRight = true;
+                            // If number exists, parse it. If empty string, default to 0.
+                            globalCount = globalMatch[1] ? parseInt(globalMatch[1], 10) : 0;
+                        }
                     }
 
                     // Check for regex prefix, which treats the pattern as a regex.
@@ -280,6 +300,7 @@ export function activate(context: vscode.ExtensionContext) {
                         pattern,
                         isAfter,
                         isGlobal,
+                        globalCount,
                         isRegex,
                         isRight
                     );

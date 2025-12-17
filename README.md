@@ -18,6 +18,8 @@ You can add modifiers to the end of the input after a `/` to customize the align
 behavior. The available modifiers are:
 
 - `/g`: Align all occurrences of the pattern in each line.
+- `/g<i>`: Align the first `<i>` occurrences of the pattern, where `<i>` must be an integer
+  number.
 - `/n`: Align the character immediately following the pattern in each line.
 - `/r`: Align the text to the right.
 
