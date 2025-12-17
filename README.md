@@ -17,8 +17,9 @@ match.
 You can add modifiers to the end of the input after a `/` to customize the alignment
 behavior. The available modifiers are:
 
-- `/g`: Aligns all occurrences of the pattern in each line.
-- `/n`: Aligns the character immediately following the pattern in each line.
+- `/g`: Align all occurrences of the pattern in each line.
+- `/n`: Align the character immediately following the pattern in each line.
+- `/r`: Align the text to the right.
 
 The alignment is interactive, allowing you to preview the result before accepting it. Press
 `Esc` to discard changes.

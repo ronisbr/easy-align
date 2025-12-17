@@ -69,17 +69,21 @@ function isVSCodeVimActive(): boolean {
  *
  * @param text Text to be aligned.
  * @param pattern Pattern to align the text (string or regex).
+ * @param isAfter If `true`, align the character just after the end of the pattern.
  * @param isGlobal If `true`, align all occurrences per line, or only the first occurrence
  *                 otherwise.
- * @param isAfter If `true`, align the character just after the end of the pattern.
+ * @param isRegex If `true`, treat the pattern as a regular expression or a literal string
+ *                otherwise.
+ * @param isRight If `true`, align to the right, or to the left otherwise. or to the left otherwise.
  * @returns The aligned text.
  */
 function alignText(
     text: string,
     pattern: string,
-    isRegex: boolean,
+    isAfter: boolean,
     isGlobal: boolean,
-    isAfter: boolean
+    isRegex: boolean,
+    isRight: boolean
 ): string {
     const lines = text.split('\n');
 
@@ -161,11 +165,21 @@ function alignText(
             if (isAfter) {
                 // Pattern: [Text][Delimiter][Padding].
                 const pad = ' '.repeat(w - (textPart.length + delimiter.length));
-                newLine += textPart + delimiter + pad;
+
+                if (isRight) {
+                    newLine += pad + textPart + delimiter;
+                } else {
+                    newLine += textPart + delimiter + pad;
+                }
             } else {
                 // Pattern: [Text][Padding][Delimiter].
                 const pad = ' '.repeat(w - textPart.length);
-                newLine += textPart + pad + delimiter;
+
+                if (isRight) {
+                    newLine += pad + textPart + delimiter;
+                } else {
+                    newLine += textPart + pad + delimiter;
+                }
             }
         }
         return newLine;
@@ -210,7 +224,6 @@ export function activate(context: vscode.ExtensionContext) {
             const inputBox = vscode.window.createInputBox();
             inputBox.title = "Align Text";
             inputBox.placeholder = "Delimiter pattern for alignment.";
-            inputBox.prompt = "Use \"r/\" (beginning) for regex, \"/g\" (end) for global, \"/n\" (end) for next.";
             inputBox.value = "";
             inputBox.show();
 
@@ -226,23 +239,27 @@ export function activate(context: vscode.ExtensionContext) {
                     }
 
                     // Parse pattern and flags.
-                    let pattern = value;
-                    let isRegex = false;
+                    let pattern  = value;
+                    let isAfter  = false;
                     let isGlobal = false;
-                    let isAfter = false;
+                    let isRegex  = false;
+                    let isRight  = false;
 
                     // Check for flags at the end of the input. The valid options are:
                     //  - g: global (all occurrences).
                     //  - n: next (after the pattern).
-                    const flagMatch = value.match(/^(.*)\/([gn]+)$/);
+                    const flagMatch = value.match(/^(.*)\/([gnr]+)$/);
 
                     if (flagMatch) {
                         pattern = flagMatch[1];
+                        if (flagMatch[2].includes('n'))
+                            isAfter = true;
+
                         if (flagMatch[2].includes('g'))
                             isGlobal = true;
 
-                        if (flagMatch[2].includes('n'))
-                            isAfter = true;
+                        if (flagMatch[2].includes('r'))
+                            isRight = true;
                     }
 
                     // Check for regex prefix, which treats the pattern as a regex.
@@ -261,9 +278,10 @@ export function activate(context: vscode.ExtensionContext) {
                     const alignedText = alignText(
                         originalText,
                         pattern,
-                        isRegex,
+                        isAfter,
                         isGlobal,
-                        isAfter
+                        isRegex,
+                        isRight
                     );
 
                     // Apply edit and update selection
@@ -284,8 +302,10 @@ export function activate(context: vscode.ExtensionContext) {
                         // User pressed Esc or clicked away. In this case, revert to
                         // original text. Notice that we must restore the selection because
                         // if the user clicked outside the input dialog, the selection might
-                        // have changed.
-                        editor.selection = new vscode.Selection(startPos, endPos);
+                        // have changed. Additionally, we must re-calculate the end position
+                        // based on the original text.
+                        const newEndPos = editor.document.lineAt(endLine).range.end;
+                        editor.selection = new vscode.Selection(startPos, newEndPos);
                         await updateEditor(editor, startPos, originalText);
                     }
 
