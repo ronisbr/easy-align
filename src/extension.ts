@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
  * Escape special characters in a string for use in a RegExp.
  *
  * @param string Input string.
+ * 
  * @returns Escaped string for use in RegExp.
  */
 function escapeRegExp(string: string) {
@@ -58,20 +59,18 @@ async function updateEditor(
         },
         {
             undoStopBefore: false,
-            undoStopAfter: false
+            undoStopAfter:  false
         }
     );
 
     // Calculate new end position to keep the text selected. This is crucial because
     // 'replace' might collapse the selection.
-    const lines = newText.split('\n');
-    const lineCount = lines.length;
-    const lastLineLen = lines[lines.length - 1].length;
-
-    const startLine = startPos.line;
-
+    const lines       = newText.split('\n');
+    const lineCount   = lines.length;
+    const lastLineLen = lines[lineCount - 1].length;
+    const startLine   = startPos.line;
     const newStartPos = new vscode.Position(startLine, 0);
-    const newEndPos = new vscode.Position(startLine + lineCount - 1, lastLineLen);
+    const newEndPos   = new vscode.Position(startLine + lineCount - 1, lastLineLen);
 
     // Re-select the new text range so the next edit/revert works correctly.
     editor.selection = new vscode.Selection(newStartPos, newEndPos);
@@ -102,27 +101,34 @@ async function updateEditorWithAlignedText(
     const input = inputBox.value;
 
     // Parse pattern and flags.
-    let pattern = input;
-    let isAfter = false;
-    let isGlobal = false;
-    let isRegex = false;
-    let isRight = false;
+    let pattern     = input;
+    let isAfter     = false;
+    let isForce     = false;
+    let isGlobal    = false;
     let globalCount = 0;
+    let isRegex     = false;
+    let isRight     = false;
 
     // Check for flags at the end of the input. The valid options are:
+    //  - f: force (include lines without the pattern).
     //  - g: global (all occurrences).
     //  - n: next (after the pattern).
     //  - r: right align.
-    const flagMatch = input.match(/^(.*)\/((?:g\d*|[nr])+)+$/);
+    const flagMatch = input.match(/^(.*)\/((?:g\d*|[fnr])+)+$/);
 
     if (flagMatch) {
         // Extract pattern without trailing flags.
-        pattern = flagMatch[1];
+        pattern     = flagMatch[1];
         const flags = flagMatch[2];
+
+        if (flags.includes('f')) {
+            isForce = true;
+        }
 
         if (flags.includes('n')) {
             isAfter = true;
         }
+
         if (flags.includes('r')) {
             isRight = true;
         }
@@ -168,6 +174,7 @@ async function updateEditorWithAlignedText(
         originalText,
         pattern,
         isAfter,
+        isForce,
         isGlobal,
         globalCount,
         isRegex,
@@ -188,6 +195,7 @@ async function updateEditorWithAlignedText(
  * @param text Text to be aligned.
  * @param pattern Pattern to align the text (string or regex).
  * @param isAfter If `true`, align the character just after the end of the pattern.
+ * @param isForce If `true`, include lines without the pattern in the alignment.
  * @param isGlobal If `true`, align all occurrences per line, or only the first occurrence
  *                 otherwise.
  * @param globalCount If `isGlobal` is `true`, this variable holds the maximum number of
@@ -195,12 +203,14 @@ async function updateEditorWithAlignedText(
  * @param isRegex If `true`, treat the pattern as a regular expression or a literal string
  *                otherwise.
  * @param isRight If `true`, align to the right, or to the left otherwise.
+ * 
  * @returns The aligned text.
  */
 function alignText(
     text: string,
     pattern: string,
     isAfter: boolean,
+    isForce: boolean,
     isGlobal: boolean,
     globalCount: number,
     isRegex: boolean,
@@ -251,12 +261,16 @@ function alignText(
     const colWidths: number[] = [];
 
     tokenizedLines.forEach(parts => {
+        // If the user wants to ignore lines without the pattern, we should skip all lines
+        // where the parts' length is 1.
+        if (!isForce && parts.length === 1) return;
+
         // The parts are structured as: Even = Text, Odd = Delimiter. Hence, the index in
         // the column width array is i / 2.
         for (let i = 0; i < parts.length; i += 2) {
             if (isGlobal && globalCount > 0 && i >= 2 * globalCount) break;
 
-            const textPart = parts[i];
+            const textPart      = parts[i];
             const delimiterPart = parts[i + 1] || "";
 
             let width = textPart.length;
@@ -277,6 +291,10 @@ function alignText(
     // == Step 3: Reconstruct ==============================================================
 
     return tokenizedLines.map(parts => {
+        // If the user wants to ignore lines without the pattern, we should just merge them
+        // if the parts' length is 1.
+        if (!isForce && parts.length === 1) return parts[0];
+
         let newLine = "";
 
         // The parts are structured as: Even = Text, Odd = Delimiter. Hence, the index in

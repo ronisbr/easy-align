@@ -17,14 +17,20 @@ match.
 You can add modifiers to the end of the input after a `/` to customize the alignment
 behavior. The available modifiers are:
 
-- `/g`: Align all occurrences of the pattern in each line.
-- `/g<i>`: Align the first `<i>` occurrences of the pattern, where `<i>` must be an integer
+- `f`: By default, the algorithm ignores lines without the selected pattern. If `f` is
+  passed, the algorithm forces alignment of all selected lines.
+- `g`: Align all occurrences of the pattern in each line.
+- `g<i>`: Align the first `<i>` occurrences of the pattern, where `<i>` must be an integer
   number.
-- `/n`: Align the character immediately following the pattern in each line.
-- `/r`: Align the text to the right.
+- `n`: Align the character immediately following the pattern in each line.
+- `r`: Align the text to the right.
 
 The alignment is interactive, allowing you to preview the result before accepting it. Press
 `Esc` to discard changes.
+
+> [!NOTE]
+> The modifier separation is **the last** `/` in the input. Hence, if the user wants to
+> match `/` and use the modifiers, they can do `//gn` for example.
 
 ## Examples
 
