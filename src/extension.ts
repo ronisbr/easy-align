@@ -6,12 +6,37 @@ import * as vscode from 'vscode';
 
 /**
  * Escape special characters in a string for use in a RegExp.
- * 
+ *
  * @param string Input string.
  * @returns Escaped string for use in RegExp.
  */
 function escapeRegExp(string: string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Simple debounce utility.
+ *
+ * @param fn Function to debounce.
+ * @param delay Delay in milliseconds.
+ */
+function createDebounced<T extends (...args: any[]) => void>(fn: T, delay: number) {
+    let timer: NodeJS.Timeout | undefined;
+    return {
+        run: (...args: Parameters<T>) => {
+            if (timer) {
+                clearTimeout(timer);
+            }
+
+            timer = setTimeout(() => fn(...args), delay);
+        },
+        cancel: () => {
+            if (timer) {
+                clearTimeout(timer);
+                timer = undefined;
+            }
+        }
+    };
 }
 
 /**
@@ -60,6 +85,99 @@ function isVSCodeVimActive(): boolean {
   return extension !== undefined && extension.isActive;
 }
 
+/**
+ * Update the editor with aligned text based on the input pattern and flags.
+ *
+ * @param editor Current text editor.
+ * @param startPos Starting position where the original text begins.
+ * @param originalText Original text to align (used for validation and revert).
+ * @param inputBox Input box containing the user's pattern and flags.
+ */
+async function updateEditorWithAlignedText(
+    editor: vscode.TextEditor,
+    startPos: vscode.Position,
+    originalText: string,
+    inputBox: vscode.InputBox
+): Promise<void> {
+    const input = inputBox.value;
+
+    // Parse pattern and flags.
+    let pattern = input;
+    let isAfter = false;
+    let isGlobal = false;
+    let isRegex = false;
+    let isRight = false;
+    let globalCount = 0;
+
+    // Check for flags at the end of the input. The valid options are:
+    //  - g: global (all occurrences).
+    //  - n: next (after the pattern).
+    //  - r: right align.
+    const flagMatch = input.match(/^(.*)\/((?:g\d*|[nr])+)+$/);
+
+    if (flagMatch) {
+        // Extract pattern without trailing flags.
+        pattern = flagMatch[1];
+        const flags = flagMatch[2];
+
+        if (flags.includes('n')) {
+            isAfter = true;
+        }
+        if (flags.includes('r')) {
+            isRight = true;
+        }
+
+        // Check for global flag with optional number.
+        const globalMatch = flags.match(/g(\d*)/);
+
+        if (globalMatch) {
+            isGlobal = true;
+
+            // If number exists, parse it. If empty string, default to 0.
+            globalCount = globalMatch[1] ? parseInt(globalMatch[1], 10) : 0;
+        }
+    }
+
+    // Check for regex prefix, which treats the pattern as a regex.
+    if (pattern.startsWith('r/')) {
+        isRegex = true;
+        pattern = pattern.substring(2);
+    }
+
+    // If pattern becomes empty due to parsing, revert.
+    if (!pattern) {
+        await updateEditor(editor, startPos, originalText);
+        return;
+    }
+
+    // Validate regex early to provide feedback.
+    if (isRegex) {
+        try {
+            new RegExp(pattern);
+        } catch (e: unknown) {
+            inputBox.validationMessage = "Invalid regex pattern.";
+            await updateEditor(editor, startPos, originalText);
+            return;
+        }
+    }
+
+    inputBox.validationMessage = "";
+
+    // Calculate alignment based on the original text.
+    const alignedText = alignText(
+        originalText,
+        pattern,
+        isAfter,
+        isGlobal,
+        globalCount,
+        isRegex,
+        isRight
+    );
+
+    // Apply edit and update selection
+    await updateEditor(editor, startPos, alignedText);
+}
+
 /******************************************************************************************
  *                                      Main Logic                                        *
  ******************************************************************************************/
@@ -76,7 +194,7 @@ function isVSCodeVimActive(): boolean {
  *                    occurrences to align per line. If `0`, align all occurrences.
  * @param isRegex If `true`, treat the pattern as a regular expression or a literal string
  *                otherwise.
- * @param isRight If `true`, align to the right, or to the left otherwise. or to the left otherwise.
+ * @param isRight If `true`, align to the right, or to the left otherwise.
  * @returns The aligned text.
  */
 function alignText(
@@ -92,31 +210,35 @@ function alignText(
 
     // Create regex (default to literal string behavior if invalid regex)
     let regex: RegExp;
+
     try {
         regex = new RegExp(isRegex ? pattern : escapeRegExp(pattern));
-    } catch {
+    } catch (e: unknown) {
         return text;
     }
 
     // == Step 1: Tokenize =================================================================
     //
     // Split each line into parts: [Text, Delimiter, Text, Delimiter...].
+
     const tokenizedLines = lines.map(line => {
         if (isGlobal) {
             // Global mode, meaning that we can consider all occurrences in the line,
             // depending on the configuration of the variable `globalCount`.
 
             // Use capturing group to keep delimiters in the split result.
-            const captureRegex = new RegExp(`(${pattern})`, 'g');
+            const safePattern = isRegex ? pattern : escapeRegExp(pattern);
+            const captureRegex = new RegExp(`(${safePattern})`, 'g');
             return line.split(captureRegex);
         }
 
         // Single match mode, meaning that we only consider the first occurrence.
-        const match = regex.exec(line);
+        const match = line.match(regex);
 
-        if (!match) return [line];
+        if (!match || match.index === undefined) return [line];
 
         const index = match.index;
+
         return [
             line.substring(0, index),
             match[0],
@@ -140,12 +262,15 @@ function alignText(
             let width = textPart.length;
 
             // If aligning after, the text column includes the delimiter's width.
-            if (isAfter) width += delimiterPart.length;
+            if (isAfter) {
+                width += delimiterPart.length;
+            }
 
             const colIndex = i / 2;
 
-            if (colWidths[colIndex] === undefined || width > colWidths[colIndex])
+            if (colWidths[colIndex] === undefined || width > colWidths[colIndex]) {
                 colWidths[colIndex] = width;
+            }
         }
     });
 
@@ -211,21 +336,26 @@ export function activate(context: vscode.ExtensionContext) {
 
             if (!editor) return;
 
+            // Maximum selection size for live preview (10k characters).
+            // TODO: Make this configurable.
+            const MAX_PREVIEW_SIZE = 10000;
+
             // == Capture the Original State ===============================================
             //
             // We will capture the entire lines covered by the selection.
-            const selection = editor.selection;
+            const selection       = editor.selection;
+            const startLine       = selection.start.line;
+            const endLine         = selection.end.line;
+            const startPos        = new vscode.Position(startLine, 0);
+            const endPos          = editor.document.lineAt(endLine).range.end;
+            const fullLineRange   = new vscode.Range(startPos, endPos);
+            const originalText    = editor.document.getText(fullLineRange);
+            const isHugeSelection = originalText.length > MAX_PREVIEW_SIZE;
 
-            const startLine = selection.start.line;
-            const endLine = selection.end.line;
-            const startPos = new vscode.Position(startLine, 0);
-            const endPos = editor.document.lineAt(endLine).range.end;
-
-            const fullLineRange = new vscode.Range(startPos, endPos);
-            const originalText = editor.document.getText(fullLineRange);
+            let largeSelectionWarned = false;
 
             if (!originalText) {
-                vscode.window.showInformationMessage('No text selected.');
+                vscode.window.showInformationMessage("No text selected.");
                 return;
             }
 
@@ -235,90 +365,91 @@ export function activate(context: vscode.ExtensionContext) {
             // == Show Input Box ===========================================================
 
             const inputBox = vscode.window.createInputBox();
-            inputBox.title = "Align Text";
+
+            inputBox.title       = "Align Text";
             inputBox.placeholder = "Delimiter pattern for alignment.";
-            inputBox.value = "";
+            inputBox.value       = "";
+
             inputBox.show();
 
             // State tracking
             let accepted = false;
 
-            inputBox.onDidChangeValue(
-                async (value) => {
+            // Debounced handler to avoid excessive edits while typing.
+            const {
+                run: runChange,
+                cancel: cancelChange
+            } = createDebounced(
+                async (value: string) => {
                     // If empty, show the original text.
                     if (!value) {
                         await updateEditor(editor, startPos, originalText);
+                        inputBox.validationMessage = "";
                         return;
                     }
 
-                    // Parse pattern and flags.
-                    let pattern  = value;
-                    let isAfter  = false;
-                    let isGlobal = false;
-                    let isRegex  = false;
-                    let isRight  = false;
-                    let globalCount = 0;
+                    // For normal-sized selections, provide live preview.
+                    if (!isHugeSelection) {
+                        await updateEditorWithAlignedText(
+                            editor,
+                            startPos,
+                            originalText,
+                            inputBox
+                        );
+                        return;
+                    }
 
-                    // Check for flags at the end of the input. The valid options are:
-                    //  - g: global (all occurrences).
-                    //  - n: next (after the pattern).
-                    //  - r: right align.
-                    const flagMatch = value.match(/^(.*)\/((?:g\d*|[nr])+)+$/);
+                    // Skip live preview for very large selections to avoid performance
+                    // issues.
+                    if (!largeSelectionWarned) {
+                        vscode.window.showInformationMessage("Selection is large; live preview disabled. Press Enter to apply.");
+                        largeSelectionWarned = true;
+                    }
 
-                    if (flagMatch) {
-                        const flags = flagMatch[2];
+                    inputBox.validationMessage = "";
 
-                        if (flags.includes('n')) isAfter = true;
-                        if (flags.includes('r')) isRight = true;
+                    // We still need to verify if the regex is valid to provide feedback.
+                    let pattern = value;
 
-                        // Check for global flag with optional number.
-                        const globalMatch = flags.match(/g(\d*)/);
+                    if (pattern.startsWith('r/')) {
+                        pattern = pattern.substring(2);
 
-                        if (globalMatch) {
-                            isGlobal = true;
-
-                            // If number exists, parse it. If empty string, default to 0.
-                            globalCount = globalMatch[1] ? parseInt(globalMatch[1], 10) : 0;
+                        // Validate regex early to provide feedback.
+                        try {
+                            new RegExp(pattern);
+                        } catch (e: unknown) {
+                            inputBox.validationMessage = "Invalid regex pattern.";
                         }
                     }
-
-                    // Check for regex prefix, which treats the pattern as a regex.
-                    if (pattern.startsWith('r/')) {
-                        isRegex = true;
-                        pattern = pattern.substring(2);
-                    }
-
-                    // If pattern becomes empty due to parsing, revert.
-                    if (!pattern) {
-                        await updateEditor(editor, startPos, originalText);
-                        return;
-                    }
-
-                    // Calculate alignment based on the original text.
-                    const alignedText = alignText(
-                        originalText,
-                        pattern,
-                        isAfter,
-                        isGlobal,
-                        globalCount,
-                        isRegex,
-                        isRight
-                    );
-
-                    // Apply edit and update selection
-                    await updateEditor(editor, startPos, alignedText);
-                }
+                },
+                150
             );
 
+            inputBox.onDidChangeValue(runChange);
+
             inputBox.onDidAccept(
-                () => {
+                async () => {
                     accepted = true;
+
+                    // For huge selections, compute and apply once on accept.
+                    if (isHugeSelection) {
+                        await updateEditorWithAlignedText(
+                            editor,
+                            startPos,
+                            originalText,
+                            inputBox
+                        );
+                    }
+
                     inputBox.hide();
                 }
             );
 
             inputBox.onDidHide(
                 async () => {
+                    // Cancel any pending debounced change to avoid late edits.
+                    cancelChange();
+
                     if (!accepted) {
                         // User pressed Esc or clicked away. In this case, revert to
                         // original text. Notice that we must restore the selection because
