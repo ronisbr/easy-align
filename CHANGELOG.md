@@ -1,5 +1,13 @@
 # Change Log
 
+## v0.2.0
+
+- ![Feature][badge-feature] Support for right alignment.
+- ![Feature][badge-feature] Support for selecting the number of occurrences the user wants
+  to use when aligning the text.
+- ![Enhancement][badge-enhancement] Improve live preview, avoiding it if the selection is
+  too large.
+
 ## v0.1.0
 
 - Initial release
