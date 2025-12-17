@@ -1,5 +1,11 @@
 # Change Log
 
+## v0.3.0
+
+- ![BREAKING][badge-breaking] ![Feature][badge-feature] The algorithm now, by default,
+  ignores all lines without the selected pattern. If the user wants to include them, they
+  can add the modifier `f`.
+
 ## v0.2.0
 
 - ![Feature][badge-feature] Support for right alignment.
