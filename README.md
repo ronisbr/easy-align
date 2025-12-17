@@ -6,6 +6,8 @@
 
 This extension provides a way to align text in VS Code interactively.
 
+![Easy Align Showcase](images/showcase.gif)
+
 ## Features
 
 The plugin allows you to align text by selecting the lines you want to align and calling the
